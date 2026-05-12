@@ -3,7 +3,7 @@ import os, time, random, logging, requests, feedparser, schedule, threading, jso
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-GEMINI_API_KEY      = os.environ.get("GEMINI_API_KEY", "")
+GROQ_API_KEY        = os.environ.get("GROQ_API_KEY", "")
 UNSPLASH_ACCESS_KEY = os.environ.get("UNSPLASH_ACCESS_KEY", "")
 TELEGRAM_BOT_TOKEN  = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHANNEL_ID = os.environ.get("TELEGRAM_CHANNEL_ID", "")
@@ -47,24 +47,27 @@ def generate_post(theme, prompt, news=""):
               "Occasionally add self-corrections like 'wait, I mean...' to seem human. "
               "Do NOT add hashtags or links.")
     full = prompt + (f"\n\nReference this chess news optionally (do not copy): {news[:300]}" if news else "")
-    for attempt in range(3):
-        try:
-            r = requests.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
-                json={"contents":[{"parts":[{"text":f"{system}\n\n{full}"}]}],"generationConfig":{"temperature":0.95,"maxOutputTokens":350}},
-                timeout=30)
-            if r.status_code == 429:
-                wait = 60 * (attempt + 1)
-                logging.warning(f"Gemini 429 — waiting {wait}s (attempt {attempt+1}/3)")
-                time.sleep(wait)
-                continue
-            r.raise_for_status()
-            return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-        except Exception as e:
-            logging.error(f"Gemini failed attempt {attempt+1}: {e}")
-            if attempt < 2: time.sleep(30)
-    logging.error("Gemini failed 3 times — fallback")
-    return get_fallback(theme)
+    try:
+        r = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": "llama-3.3-70b-versatile",
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user",   "content": full}
+                ],
+                "temperature": 0.95,
+                "max_tokens": 350,
+            },
+            timeout=30)
+        r.raise_for_status()
+        text = r.json()["choices"][0]["message"]["content"].strip()
+        logging.info(f"Groq generated post for: {theme}")
+        return text
+    except Exception as e:
+        logging.error(f"Groq failed: {e}")
+        return get_fallback(theme)
 
 def get_fallback(theme):
     return {"Tip of the Week":"♟️ Chess tip: Don't move the same piece twice in the opening. Unless you enjoy losing. Some people do. No judgment.",
@@ -235,3 +238,4 @@ if __name__=="__main__":
         logging.info("📅 Schedule active!")
         while True:
             schedule.run_pending(); time.sleep(30)
+
