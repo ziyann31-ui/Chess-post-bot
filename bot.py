@@ -46,17 +46,25 @@ def generate_post(theme, prompt, news=""):
               "feels human-written, natural emojis. NEVER sound corporate or AI-generated. "
               "Occasionally add self-corrections like 'wait, I mean...' to seem human. "
               "Do NOT add hashtags or links.")
-    full = prompt + (f"\n\nReference this chess news optionally (don't copy): {news[:300]}" if news else "")
-    try:
-        r = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
-            json={"contents":[{"parts":[{"text":f"{system}\n\n{full}"}]}],"generationConfig":{"temperature":0.95,"maxOutputTokens":350}},
-            timeout=30)
-        r.raise_for_status()
-        return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-    except Exception as e:
-        logging.error(f"Gemini failed: {e}")
-        return get_fallback(theme)
+    full = prompt + (f"\n\nReference this chess news optionally (do not copy): {news[:300]}" if news else "")
+    for attempt in range(3):
+        try:
+            r = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
+                json={"contents":[{"parts":[{"text":f"{system}\n\n{full}"}]}],"generationConfig":{"temperature":0.95,"maxOutputTokens":350}},
+                timeout=30)
+            if r.status_code == 429:
+                wait = 60 * (attempt + 1)
+                logging.warning(f"Gemini 429 — waiting {wait}s (attempt {attempt+1}/3)")
+                time.sleep(wait)
+                continue
+            r.raise_for_status()
+            return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        except Exception as e:
+            logging.error(f"Gemini failed attempt {attempt+1}: {e}")
+            if attempt < 2: time.sleep(30)
+    logging.error("Gemini failed 3 times — fallback")
+    return get_fallback(theme)
 
 def get_fallback(theme):
     return {"Tip of the Week":"♟️ Chess tip: Don't move the same piece twice in the opening. Unless you enjoy losing. Some people do. No judgment.",
